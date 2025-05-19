@@ -9,5 +9,5 @@ libs = ["lib"]
 evm_version = "london"
 
 # OR, if you want to keep Shanghai for compilation but not for the test VM:
-[anvil]
+[profile.anvil]
 hardfork = "london"

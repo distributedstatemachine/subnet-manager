@@ -3,15 +3,15 @@ pragma solidity ^0.8.17;
 
 /**
  * @title SubtensorStorage
- * @dev Library for querying Subtensor pallet storage values via precompile
+ * @dev Library for querying Subtensor pallet storage values via precompile using a pre-assembled key.
  */
 library SubtensorStorage {
     // --------------------------------------------------------------------- //
     // CONSTANTS                                                             //
     // --------------------------------------------------------------------- //
 
-    // Precompile address for storage queries
-    address internal constant PRECOMPILE = 0x0000000000000000000000000000000000000807;
+    // Precompile address for storage queries (index 2055)
+    address internal constant PRECOMPILE_ADDRESS = 0x0000000000000000000000000000000000000807;
 
     // Pallet name hash: twox128("SubtensorModule")
     bytes16 internal constant PALLET_PREFIX = 0x658faa385070e074c85bf6b568cf0555;
@@ -48,24 +48,47 @@ library SubtensorStorage {
     }
 
     /**
-     * Low-level call into the Frontier storage-query precompile.
+     * @dev Low-level call into the Frontier storage-query precompile.
+     * Assumes the precompile returns SCALE-encoded u64 (8 bytes, little-endian).
+     * @param fullStorageKey The fully assembled storage key.
+     * @return value The u64 value.
      */
-    function _query(bytes memory key) private view returns (uint64 value) {
-        bytes memory out = new bytes(8); // u64 = 8 bytes
-        bool ok;
+    function queryPrecompile(bytes memory fullStorageKey) internal view returns (uint64 value) {
+        bytes memory out = new bytes(8); // Max size for u64
+        bool success;
+
         assembly {
-            ok := staticcall(
-                gas(),
-                PRECOMPILE,
-                add(key, 0x20),
-                mload(key),
-                add(out, 0x20),
-                8
+            success := staticcall(
+                gas(),                  // gas
+                PRECOMPILE_ADDRESS,     // address of precompile
+                add(fullStorageKey, 0x20), // input ptr (skip length)
+                mload(fullStorageKey),      // input size
+                add(out, 0x20),         // output ptr (skip length)
+                8                       // output size (request up to 8 bytes for u64)
             )
         }
-        require(ok, "SubtensorStorage: precompile call failed");
 
-        assembly { value := mload(add(out, 0x20)) }
+        uint256 returnedDataSize;
+        assembly { returnedDataSize := returndatasize() }
+
+        if (!success || returnedDataSize == 0) {
+            return 0; // Call failed or no data (e.g., key not found)
+        }
+
+        // Decode little-endian bytes from 'out' buffer.
+        // Only read up to 'returnedDataSize' or 8, whichever is smaller.
+        uint64 tempValue = 0;
+        uint256 maxBytesToRead = returnedDataSize < 8 ? returnedDataSize : 8;
+
+        for (uint i = 0; i < maxBytesToRead; ) {
+            uint8 byteVal;
+            // solhint-disable-next-line no-inline-assembly
+            assembly { byteVal := byte(0, mload(add(add(out, 0x20), i))) }
+            tempValue |= uint64(byteVal) << uint64(i * 8);
+            // solhint-disable-next-line no-plusplus
+            i++;
+        }
+        return tempValue;
     }
 
     // --------------------------------------------------------------------- //
@@ -73,22 +96,22 @@ library SubtensorStorage {
     // --------------------------------------------------------------------- //
 
     function subnetAlphaInEmission(uint16 netuid) internal view returns (uint64) {
-        return _query(_buildStorageKey(SUBNET_ALPHA_IN_EMISSION_PREFIX, netuid));
+        return queryPrecompile(_buildStorageKey(SUBNET_ALPHA_IN_EMISSION_PREFIX, netuid));
     }
 
     function subnetAlphaOutEmission(uint16 netuid) internal view returns (uint64) {
-        return _query(_buildStorageKey(SUBNET_ALPHA_OUT_EMISSION_PREFIX, netuid));
+        return queryPrecompile(_buildStorageKey(SUBNET_ALPHA_OUT_EMISSION_PREFIX, netuid));
     }
 
     function subnetTaoInEmission(uint16 netuid) internal view returns (uint64) {
-        return _query(_buildStorageKey(SUBNET_TAO_IN_EMISSION_PREFIX, netuid));
+        return queryPrecompile(_buildStorageKey(SUBNET_TAO_IN_EMISSION_PREFIX, netuid));
     }
 
     function subnetAlphaIn(uint16 netuid) internal view returns (uint64) {
-        return _query(_buildStorageKey(SUBNET_ALPHA_IN_PREFIX, netuid));
+        return queryPrecompile(_buildStorageKey(SUBNET_ALPHA_IN_PREFIX, netuid));
     }
 
     function subnetAlphaOut(uint16 netuid) internal view returns (uint64) {
-        return _query(_buildStorageKey(SUBNET_ALPHA_OUT_PREFIX, netuid));
+        return queryPrecompile(_buildStorageKey(SUBNET_ALPHA_OUT_PREFIX, netuid));
     }
 } 

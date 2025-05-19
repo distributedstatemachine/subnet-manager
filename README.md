@@ -12,12 +12,14 @@ This repository contains a system for managing a Subtensor subnet owner's coldke
 
 4. **Keeper**: An off-chain automation agent that triggers the periodic APY distribution process.
 
+5. **SubtensorReader**: A contract that reads Subtensor storage values using pre-calculated storage key prefixes.
+
 ## Setup and Deployment
 
 ### Prerequisites
 
 - [Foundry](https://book.getfoundry.sh/getting-started/installation)
-- Node.js and npm (for the Keeper script)
+- Node.js and npm (for the FFI scripts and Keeper)
 
 ### Installation
 
@@ -30,12 +32,18 @@ This repository contains a system for managing a Subtensor subnet owner's coldke
 2. Install dependencies:
    ```bash
    forge install
-   npm install # For the Keeper script
+   npm install # For the FFI scripts and Keeper
    ```
 
 ### Deployment
 
-1. Deploy the MultiSigWalletWithVeto:
+1. Deploy the SubtensorReader:
+   ```bash
+   # This uses FFI to generate storage key prefixes
+   forge script script/SubtensorReader.s.sol:DeploySubtensorReaderScript --broadcast --ffi
+   ```
+
+2. Deploy the MultiSigWalletWithVeto:
    ```bash
    # Using default parameters
    forge script script/MultiSigWalletWithVeto.s.sol:MultiSigWalletWithVetoScript --broadcast
@@ -45,18 +53,18 @@ This repository contains a system for managing a Subtensor subnet owner's coldke
    forge script script/MultiSigWalletWithVeto.s.sol:MultiSigWalletWithVetoScript --broadcast
    ```
 
-2. Deploy the StakeDistributor:
+3. Deploy the StakeDistributor:
    ```bash
    # Using the deployed MultiSigWalletWithVeto address
    MULTISIG_WALLET="0x789..." STAKING_PRECOMPILE="0x800..." \
    forge script script/StakeDistributor.s.sol:StakeDistributorScript --broadcast
    ```
 
-3. Initialize the StakeDistributor:
+4. Initialize the StakeDistributor:
    - Use the MultiSigWalletWithVeto to propose and execute a transaction to initialize the StakeDistributor
    - Set up the distribution targets and other parameters
 
-4. Configure the Keeper:
+5. Configure the Keeper:
    ```bash
    # Set environment variables
    export RPC_URL="https://your-rpc-url"
@@ -71,6 +79,23 @@ This repository contains a system for managing a Subtensor subnet owner's coldke
    ```
 
 ## Usage
+
+### SubtensorReader
+
+The SubtensorReader contract provides a clean interface to query Subtensor storage values:
+
+```bash
+# Set the deployed reader address
+export SUBTENSOR_READER_ADDRESS="0xdeployed_address"
+
+# Query values for netuid 0 (default)
+forge script script/QuerySubtensor.s.sol:QuerySubtensorScript --rpc-url <your_rpc>
+
+# Query values for a specific netuid
+NETUID_QUERY=1 forge script script/QuerySubtensor.s.sol:QuerySubtensorScript --rpc-url <your_rpc>
+```
+
+The SubtensorReader uses pre-calculated storage key prefixes generated via FFI during deployment, which makes the on-chain logic simpler and more gas-efficient.
 
 ### MultiSigWalletWithVeto
 
@@ -93,6 +118,44 @@ The Keeper script automates the APY distribution process:
 4. Executes the transfers after the veto period
 5. Confirms the distribution to update the StakeDistributor's state
 
+## Technical Details
+
+### Storage Key Generation
+
+The system uses an FFI script (`scripts/ffi/generateStorageKey.mjs`) to generate Substrate storage key prefixes. This approach:
+
+1. Moves the complex part of storage key generation (pallet and item name hashing) off-chain
+2. Allows Solidity to work with pre-calculated prefixes
+3. Makes the on-chain logic simpler and more gas-efficient
+
+The script can be used directly for debugging:
+
+```bash
+# Generate a combined prefix
+node scripts/ffi/generateStorageKey.mjs combinedPrefix SubtensorModule SubnetAlphaInEmission
+
+# Generate a full storage key
+node scripts/ffi/generateStorageKey.mjs fullKey SubtensorModule SubnetAlphaInEmission 1
+```
+
+### SubtensorStorage Library
+
+The `SubtensorStorage` library provides a low-level interface to query the Frontier storage precompile. It:
+
+1. Takes a fully assembled storage key as input
+2. Performs a `staticcall` to the precompile
+3. Decodes the SCALE-encoded u64 result
+4. Handles errors and empty responses gracefully
+
+### SubtensorReader Contract
+
+The `SubtensorReader` contract provides a high-level interface to query Subtensor storage values. It:
+
+1. Stores pre-calculated storage key prefixes as immutable state variables
+2. SCALE-encodes the netuid parameter
+3. Concatenates the prefix with the encoded netuid to form the full storage key
+4. Calls the SubtensorStorage library to query the precompile
+
 ## Testing
 
 Run the tests:
@@ -100,12 +163,18 @@ Run the tests:
 forge test
 ```
 
+The tests include:
+- Unit tests for the SubtensorStorage library with mocked precompile responses
+- Unit tests for the SubtensorReader contract with mocked precompile responses
+- Integration tests that can be run against a live node
+
 ## Security Considerations
 
 - The MultiSigWalletWithVeto is the root of trust on the EVM side. Its security is paramount.
 - The StakeDistributor is trusted to perform calculations correctly but cannot move funds; it only proposes plans or updates its state based on MultiSig actions.
 - The Keeper is trusted to trigger the process and submit valid proposals. A malicious keeper could spam proposals, but cannot execute them or steal funds.
 - Correctness of lastKnownStakeBalanceRao in StakeDistributor is vital and relies on the MultiSig owners diligently calling reportManualStakeChange after any non-APY stake movements they perform.
+- The SubtensorReader and SubtensorStorage components are read-only and cannot modify state, making them inherently safer.
 
 ## License
 
