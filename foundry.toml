@@ -4,3 +4,10 @@ out = "out"
 libs = ["lib"]
 
 # See more config options https://github.com/foundry-rs/foundry/blob/master/crates/config/README.md#all-options
+
+# run the VM in the last PoW fork → prevrandao not required
+evm_version = "london"
+
+# OR, if you want to keep Shanghai for compilation but not for the test VM:
+[anvil]
+hardfork = "london"

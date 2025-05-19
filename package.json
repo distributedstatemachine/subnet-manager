@@ -1,0 +1,5 @@
+{
+  "devDependencies": {
+    "xxhashjs": "^0.2.2"
+  }
+}
