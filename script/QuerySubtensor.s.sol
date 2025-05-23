@@ -12,7 +12,9 @@ contract QuerySubtensorScript is Script {
         address readerAddress = vm.envAddress("SUBTENSOR_READER_ADDRESS");
         if (readerAddress == address(0)) {
             console.log("SUBTENSOR_READER_ADDRESS env var not set.");
-            console.log("Please deploy SubtensorReader first using 'script/SubtensorReader.s.sol:DeploySubtensorReaderScript --ffi'.");
+            console.log(
+                "Please deploy SubtensorReader first using 'script/SubtensorReader.s.sol:DeploySubtensorReaderScript --ffi'."
+            );
             revert("SubtensorReader address not provided.");
         }
         reader = SubtensorReader(readerAddress);
@@ -39,8 +41,8 @@ contract QuerySubtensorScript is Script {
 
         uint64 alphaOut = reader.subnetAlphaOut(netuidToQuery);
         console.log("SubnetAlphaOut        :", alphaOut);
-        
+
         console.log("---");
         console.log("Query finished.");
     }
-} 
+}

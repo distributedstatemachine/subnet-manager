@@ -24,18 +24,12 @@ contract SubtensorReader {
      * @param saiPrefix  twox128("SubtensorModule") || twox128("SubnetAlphaIn")
      * @param saoPrefix  twox128("SubtensorModule") || twox128("SubnetAlphaOut")
      */
-    constructor(
-        bytes32 saiePrefix,
-        bytes32 saoePrefix,
-        bytes32 stiePrefix,
-        bytes32 saiPrefix,
-        bytes32 saoPrefix
-    ) {
-        KEY_PREFIX_SUBNET_ALPHA_IN_EMISSION  = saiePrefix;
+    constructor(bytes32 saiePrefix, bytes32 saoePrefix, bytes32 stiePrefix, bytes32 saiPrefix, bytes32 saoPrefix) {
+        KEY_PREFIX_SUBNET_ALPHA_IN_EMISSION = saiePrefix;
         KEY_PREFIX_SUBNET_ALPHA_OUT_EMISSION = saoePrefix;
-        KEY_PREFIX_SUBNET_TAO_IN_EMISSION    = stiePrefix;
-        KEY_PREFIX_SUBNET_ALPHA_IN           = saiPrefix;
-        KEY_PREFIX_SUBNET_ALPHA_OUT          = saoPrefix;
+        KEY_PREFIX_SUBNET_TAO_IN_EMISSION = stiePrefix;
+        KEY_PREFIX_SUBNET_ALPHA_IN = saiPrefix;
+        KEY_PREFIX_SUBNET_ALPHA_OUT = saoPrefix;
     }
 
     /**
@@ -44,8 +38,8 @@ contract SubtensorReader {
      */
     function _encodeNetuidToBytes(uint16 netuid) private pure returns (bytes memory) {
         bytes memory encoded = new bytes(2);
-        encoded[0] = bytes1(uint8(netuid));       // LSB
-        encoded[1] = bytes1(uint8(netuid >> 8));  // MSB
+        encoded[0] = bytes1(uint8(netuid)); // LSB
+        encoded[1] = bytes1(uint8(netuid >> 8)); // MSB
         return encoded;
     }
 
@@ -106,4 +100,4 @@ contract SubtensorReader {
     function subnetAlphaOut(uint16 netuid) external view returns (uint64) {
         return _queryWithPrefix(KEY_PREFIX_SUBNET_ALPHA_OUT, netuid);
     }
-} 
+}

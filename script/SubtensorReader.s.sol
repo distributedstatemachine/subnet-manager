@@ -5,7 +5,6 @@ import {Script, console} from "forge-std/Script.sol";
 import {SubtensorReader} from "../src/SubtensorReader.sol";
 
 contract DeploySubtensorReaderScript is Script {
-
     function run() external {
         // Use FFI to get combined prefixes
         string[] memory ffiParamsSAIE = new string[](3);
@@ -43,7 +42,6 @@ contract DeploySubtensorReaderScript is Script {
         bytes memory saoPrefixBytes = vm.ffi(ffiParamsSAO);
         bytes32 saoPrefix = vm.parseBytes32(string(saoPrefixBytes));
 
-
         console.log("Deploying SubtensorReader with FFI generated prefixes:");
         console.log("SAIE Prefix (SubnetAlphaInEmission):", vm.toString(saiePrefix));
         console.log("SAOE Prefix (SubnetAlphaOutEmission):", vm.toString(saoePrefix));
@@ -52,16 +50,10 @@ contract DeploySubtensorReaderScript is Script {
         console.log("SAO Prefix (SubnetAlphaOut):", vm.toString(saoPrefix));
 
         vm.startBroadcast();
-        SubtensorReader reader = new SubtensorReader(
-            saiePrefix,
-            saoePrefix,
-            stiePrefix,
-            saiPrefix,
-            saoPrefix
-        );
+        SubtensorReader reader = new SubtensorReader(saiePrefix, saoePrefix, stiePrefix, saiPrefix, saoPrefix);
         vm.stopBroadcast();
 
         console.log("SubtensorReader deployed to:", address(reader));
         console.log("You can set this address in SUBTENSOR_READER_ADDRESS env var for QuerySubtensor.s.sol");
     }
-} 
+}
