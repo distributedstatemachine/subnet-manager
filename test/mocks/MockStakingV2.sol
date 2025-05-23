@@ -3,7 +3,7 @@ pragma solidity 0.8.20;
 
 contract MockStakingV2 {
     mapping(bytes32 => mapping(bytes32 => mapping(uint16 => uint256))) private stakes;
-    
+
     // Track transfer calls
     bool public transferStakeCalled;
     bytes32 public lastDestinationColdkey;
@@ -11,7 +11,7 @@ contract MockStakingV2 {
     uint16 public lastOriginNetuid;
     uint16 public lastDestinationNetuid;
     uint256 public lastTransferAmount;
-    
+
     bool private shouldFailTransfer;
 
     function setStake(bytes32 hotkey, bytes32 coldkey, uint16 netuid, uint256 amount) external {
@@ -32,7 +32,7 @@ contract MockStakingV2 {
         if (shouldFailTransfer) {
             revert("Mock transfer failure");
         }
-        
+
         // Record the call
         transferStakeCalled = true;
         lastDestinationColdkey = destinationColdkey;
@@ -62,4 +62,4 @@ contract MockStakingV2 {
     fallback() external payable {
         // Do nothing - just don't revert
     }
-} 
+}

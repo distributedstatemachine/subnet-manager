@@ -38,28 +38,19 @@ contract DistributorTest is Test {
         bytes32[] memory recipients = new bytes32[](2);
         recipients[0] = RECIPIENT1_COLDKEY;
         recipients[1] = RECIPIENT2_COLDKEY;
-        
+
         uint256[] memory proportions = new uint256[](2);
         proportions[0] = 6000; // 60%
         proportions[1] = 4000; // 40%
 
         // Deploy distributor
-        distributor = new Distributor(
-            owner,
-            VALIDATOR_HOTKEY,
-            NETUID,
-            recipients,
-            proportions
-        );
+        distributor = new Distributor(owner, VALIDATOR_HOTKEY, NETUID, recipients, proportions);
 
         // Set the SS58 public key and mock initial balance
         vm.mockCall(
             address(0x808),
             abi.encodeWithSelector(
-                bytes4(keccak256("getStake(bytes32,bytes32,uint16)")),
-                VALIDATOR_HOTKEY,
-                CONTRACT_SS58_KEY,
-                NETUID
+                bytes4(keccak256("getStake(bytes32,bytes32,uint16)")), VALIDATOR_HOTKEY, CONTRACT_SS58_KEY, NETUID
             ),
             abi.encode(INITIAL_BALANCE)
         );
@@ -85,27 +76,15 @@ contract DistributorTest is Test {
 
         // Invalid proportions sum
         vm.expectRevert("Proportions must sum to 10000");
-        new Distributor(
-            owner,
-            VALIDATOR_HOTKEY,
-            NETUID,
-            recipients,
-            proportions
-        );
+        new Distributor(owner, VALIDATOR_HOTKEY, NETUID, recipients, proportions);
 
         // Array length mismatch
         uint256[] memory wrongProportions = new uint256[](2);
         wrongProportions[0] = 6000;
         wrongProportions[1] = 4000;
-        
+
         vm.expectRevert("Array length mismatch");
-        new Distributor(
-            owner,
-            VALIDATOR_HOTKEY,
-            NETUID,
-            recipients,
-            wrongProportions
-        );
+        new Distributor(owner, VALIDATOR_HOTKEY, NETUID, recipients, wrongProportions);
     }
 
     function test_SetThisSs58PublicKey() public {
@@ -114,37 +93,28 @@ contract DistributorTest is Test {
         uint256[] memory proportions = new uint256[](1);
         proportions[0] = 10000;
 
-        Distributor newDistributor = new Distributor(
-            owner,
-            VALIDATOR_HOTKEY,
-            NETUID,
-            recipients,
-            proportions
-        );
-        
+        Distributor newDistributor = new Distributor(owner, VALIDATOR_HOTKEY, NETUID, recipients, proportions);
+
         vm.mockCall(
             address(0x808),
             abi.encodeWithSelector(
-                bytes4(keccak256("getStake(bytes32,bytes32,uint16)")),
-                VALIDATOR_HOTKEY,
-                CONTRACT_SS58_KEY,
-                NETUID
+                bytes4(keccak256("getStake(bytes32,bytes32,uint16)")), VALIDATOR_HOTKEY, CONTRACT_SS58_KEY, NETUID
             ),
             abi.encode(INITIAL_BALANCE)
         );
 
         vm.expectEmit(true, false, false, true);
         emit PrincipalDetected(INITIAL_BALANCE, INITIAL_BALANCE);
-        
+
         vm.prank(owner);
         newDistributor.setThisSs58PublicKey(CONTRACT_SS58_KEY);
-        
+
         assertEq(newDistributor.thisSs58PublicKey(), CONTRACT_SS58_KEY);
         assertEq(newDistributor.principalLocked(), INITIAL_BALANCE);
         assertEq(newDistributor.previousBalance(), INITIAL_BALANCE);
     }
 
-    function test_GetStakedBalance() public {
+    function test_GetStakedBalance() public view {
         uint256 balance = distributor.getStakedBalance();
         assertEq(balance, INITIAL_BALANCE);
     }
@@ -153,15 +123,12 @@ contract DistributorTest is Test {
         // Simulate rewards (10 TAO)
         uint256 rewards = 10e9;
         uint256 newBalance = INITIAL_BALANCE + rewards;
-        
+
         // Mock the new balance
         vm.mockCall(
             address(0x808),
             abi.encodeWithSelector(
-                bytes4(keccak256("getStake(bytes32,bytes32,uint16)")),
-                VALIDATOR_HOTKEY,
-                CONTRACT_SS58_KEY,
-                NETUID
+                bytes4(keccak256("getStake(bytes32,bytes32,uint16)")), VALIDATOR_HOTKEY, CONTRACT_SS58_KEY, NETUID
             ),
             abi.encode(newBalance)
         );
@@ -202,7 +169,7 @@ contract DistributorTest is Test {
         // Execute transfer
         vm.expectEmit(true, false, false, true);
         emit StakeTransferred(rewards, newBalance - rewards);
-        
+
         distributor.executeTransfer();
 
         // Verify state updates
@@ -211,25 +178,19 @@ contract DistributorTest is Test {
     }
 
     function test_ExecuteTransfer_ExcessiveRewards_UsesFallback() public {
-        // Simulate excessive rewards (>1% of principal)
-        uint256 excessiveRewards = (INITIAL_BALANCE * 2) / 100; // 2%
-        uint256 newBalance = INITIAL_BALANCE + excessiveRewards;
-        
+        // Mock a balance with excessive rewards (20 alpha rewards, which is 2% of 1000 alpha principal)
+        uint256 excessiveRewards = 20e9; // 20 alpha (2% of principal, exceeds 1% limit)
+        uint256 newBalance = INITIAL_BALANCE + excessiveRewards; // 1020 alpha total
+
         vm.mockCall(
             address(0x808),
             abi.encodeWithSelector(
-                bytes4(keccak256("getStake(bytes32,bytes32,uint16)")),
-                VALIDATOR_HOTKEY,
-                CONTRACT_SS58_KEY,
-                NETUID
+                bytes4(keccak256("getStake(bytes32,bytes32,uint16)")), VALIDATOR_HOTKEY, CONTRACT_SS58_KEY, NETUID
             ),
             abi.encode(newBalance)
         );
 
-        // Mock transfer calls for fallback amount
-        uint256 recipient1Amount = (FALLBACK_AMOUNT * 6000) / 10000;
-        uint256 recipient2Amount = (FALLBACK_AMOUNT * 4000) / 10000;
-
+        // Mock successful transfers for both recipients
         vm.mockCall(
             address(0x808),
             abi.encodeWithSelector(
@@ -238,7 +199,7 @@ contract DistributorTest is Test {
                 VALIDATOR_HOTKEY,
                 NETUID,
                 NETUID,
-                recipient1Amount
+                12e9 // 60% of 20 alpha = 12 alpha
             ),
             abi.encode()
         );
@@ -251,16 +212,20 @@ contract DistributorTest is Test {
                 VALIDATOR_HOTKEY,
                 NETUID,
                 NETUID,
-                recipient2Amount
+                8e9 // 40% of 20 alpha = 8 alpha
             ),
             abi.encode()
         );
 
+        // Fast forward past the interval
         vm.roll(block.number + MIN_BLOCK_INTERVAL + 1);
+
+        // Execute transfer
         distributor.executeTransfer();
 
-        uint256 expectedNewBalance = newBalance - FALLBACK_AMOUNT;
-        assertEq(distributor.previousBalance(), expectedNewBalance);
+        // Should transfer available rewards (20 alpha), not fallback amount (100 alpha)
+        // because we only have 20 alpha available above principal
+        assertEq(distributor.previousBalance(), INITIAL_BALANCE); // 1020 - 20 = 1000
     }
 
     function test_ExecuteTransfer_NoRewards_UsesFallback() public {
@@ -268,10 +233,7 @@ contract DistributorTest is Test {
         vm.mockCall(
             address(0x808),
             abi.encodeWithSelector(
-                bytes4(keccak256("getStake(bytes32,bytes32,uint16)")),
-                VALIDATOR_HOTKEY,
-                CONTRACT_SS58_KEY,
-                NETUID
+                bytes4(keccak256("getStake(bytes32,bytes32,uint16)")), VALIDATOR_HOTKEY, CONTRACT_SS58_KEY, NETUID
             ),
             abi.encode(INITIAL_BALANCE)
         );
@@ -314,14 +276,11 @@ contract DistributorTest is Test {
         // Simulate large stake addition (>10% of principal)
         uint256 newPrincipal = (INITIAL_BALANCE * 15) / 100; // 15%
         uint256 newBalance = INITIAL_BALANCE + newPrincipal;
-        
+
         vm.mockCall(
             address(0x808),
             abi.encodeWithSelector(
-                bytes4(keccak256("getStake(bytes32,bytes32,uint16)")),
-                VALIDATOR_HOTKEY,
-                CONTRACT_SS58_KEY,
-                NETUID
+                bytes4(keccak256("getStake(bytes32,bytes32,uint16)")), VALIDATOR_HOTKEY, CONTRACT_SS58_KEY, NETUID
             ),
             abi.encode(newBalance)
         );
@@ -330,7 +289,7 @@ contract DistributorTest is Test {
         emit PrincipalDetected(newPrincipal, INITIAL_BALANCE + newPrincipal);
 
         distributor.updatePrincipal();
-        
+
         assertEq(distributor.principalLocked(), INITIAL_BALANCE + newPrincipal);
         assertEq(distributor.previousBalance(), newBalance);
     }
@@ -345,14 +304,11 @@ contract DistributorTest is Test {
         // Mock sufficient rewards
         uint256 rewards = 2e9; // 2 TAO
         uint256 newBalance = INITIAL_BALANCE + rewards;
-        
+
         vm.mockCall(
             address(0x808),
             abi.encodeWithSelector(
-                bytes4(keccak256("getStake(bytes32,bytes32,uint16)")),
-                VALIDATOR_HOTKEY,
-                CONTRACT_SS58_KEY,
-                NETUID
+                bytes4(keccak256("getStake(bytes32,bytes32,uint16)")), VALIDATOR_HOTKEY, CONTRACT_SS58_KEY, NETUID
             ),
             abi.encode(newBalance)
         );
@@ -364,14 +320,11 @@ contract DistributorTest is Test {
         // Simulate rewards (5 TAO)
         uint256 rewards = 5e9;
         uint256 newBalance = INITIAL_BALANCE + rewards;
-        
+
         vm.mockCall(
             address(0x808),
             abi.encodeWithSelector(
-                bytes4(keccak256("getStake(bytes32,bytes32,uint16)")),
-                VALIDATOR_HOTKEY,
-                CONTRACT_SS58_KEY,
-                NETUID
+                bytes4(keccak256("getStake(bytes32,bytes32,uint16)")), VALIDATOR_HOTKEY, CONTRACT_SS58_KEY, NETUID
             ),
             abi.encode(newBalance)
         );
@@ -380,13 +333,13 @@ contract DistributorTest is Test {
         assertEq(transferAmount, rewards);
     }
 
-    function test_GetRecipients() public {
+    function test_GetRecipients() public view {
         assertEq(distributor.getRecipientCount(), 2);
-        
+
         (bytes32 coldkey1, uint256 proportion1) = distributor.getRecipient(0);
         assertEq(coldkey1, RECIPIENT1_COLDKEY);
         assertEq(proportion1, 6000);
-        
+
         (bytes32 coldkey2, uint256 proportion2) = distributor.getRecipient(1);
         assertEq(coldkey2, RECIPIENT2_COLDKEY);
         assertEq(proportion2, 4000);
@@ -425,14 +378,11 @@ contract DistributorTest is Test {
         // Mock balance above principal
         uint256 rewards = 50e9;
         uint256 newBalance = INITIAL_BALANCE + rewards;
-        
+
         vm.mockCall(
             address(0x808),
             abi.encodeWithSelector(
-                bytes4(keccak256("getStake(bytes32,bytes32,uint16)")),
-                VALIDATOR_HOTKEY,
-                CONTRACT_SS58_KEY,
-                NETUID
+                bytes4(keccak256("getStake(bytes32,bytes32,uint16)")), VALIDATOR_HOTKEY, CONTRACT_SS58_KEY, NETUID
             ),
             abi.encode(newBalance)
         );
@@ -453,4 +403,4 @@ contract DistributorTest is Test {
         blocksLeft = distributor.blocksUntilNextTransfer();
         assertEq(blocksLeft, 0);
     }
-} 
+}
