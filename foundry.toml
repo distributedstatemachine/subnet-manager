@@ -2,5 +2,19 @@
 src = "src"
 out = "out"
 libs = ["lib"]
+via_ir = true
+optimizer = true
+optimizer_runs = 200
 
 # See more config options https://github.com/foundry-rs/foundry/blob/master/crates/config/README.md#all-options
+
+# run the VM in the last PoW fork → prevrandao not required
+evm_version = "london"
+
+# OR, if you want to keep Shanghai for compilation but not for the test VM:
+[profile.anvil]
+hardfork = "london"
+
+[profile.ci]
+fuzz = { runs = 10_000 }
+invariant = { runs = 1_000 }

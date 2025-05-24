@@ -1,0 +1,31 @@
+name: Distributor Service
+
+on:
+  schedule:
+    # Run every 4 hours (6 times per day)
+    - cron: '0 */4 * * *'
+  workflow_dispatch: # Allow manual triggering
+
+jobs:
+  execute-transfer:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '18'
+        
+    - name: Install dependencies
+      run: |
+        npm install ethers dotenv
+        
+    - name: Execute transfer
+      env:
+        RPC_URL: ${{ secrets.RPC_URL }}
+        PRIVATE_KEY: ${{ secrets.PRIVATE_KEY }}
+        DISTRIBUTOR_ADDRESS: ${{ secrets.DISTRIBUTOR_ADDRESS }}
+      run: node scripts/execute-transfer.js 

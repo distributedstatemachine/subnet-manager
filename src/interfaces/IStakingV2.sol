@@ -26,6 +26,9 @@ interface IStakingV2 {
     function getTotalColdkeyStake(bytes32 coldkey) external view returns (uint256 stakeRao);
     function getTotalHotkeyStake(bytes32 hotkey) external view returns (uint256 stakeRao);
     function getStake(bytes32 hotkey, bytes32 coldkey, uint16 netuid) external view returns (uint256 stakeRao);
-    function getAlphaStakedValidators(bytes32 hotkey, uint16 netuid) external view returns (bytes32[] memory coldkeys);
+    function getAlphaStakedValidators(bytes32 hotkey, uint16 netuid)
+        external
+        view
+        returns (bytes32[] memory coldkeys);
     function getTotalAlphaStaked(bytes32 hotkey, uint16 netuid) external view returns (uint256 stakeAlpha);
-} 
+}

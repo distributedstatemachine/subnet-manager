@@ -20,6 +20,7 @@ contract StakeDistributor {
         bytes32 coldkey;
         uint16 ratioPermille; // e.g., 500 for 50%
     }
+
     DistributionTarget[] public distributionTargets;
     uint16 public totalRatioPermille; // Should sum to 1000 if properly configured
 
@@ -32,7 +33,7 @@ contract StakeDistributor {
         uint256 amountRao;
     }
 
-    uint256 public lastDistribution;          // unix-time of the last run
+    uint256 public lastDistribution; // unix-time of the last run
     uint256 public immutable distributionInterval;
 
     // --- Events ---
@@ -46,11 +47,7 @@ contract StakeDistributor {
     );
     event DistributionTargetsUpdated(DistributionTarget[] newTargets, uint16 newTotalRatio);
     event ManualStakeChangeReported(int256 amountChangeRao, uint256 newBalanceRao);
-    event ApyDistributed(
-        uint256 totalDistributedRao,
-        uint256 newStakeBalanceRao,
-        uint256 distributionTimestamp
-    );
+    event ApyDistributed(uint256 totalDistributedRao, uint256 newStakeBalanceRao, uint256 distributionTimestamp);
     event MinIntervalUpdated(uint256 newInterval);
 
     // --- Modifiers ---
@@ -72,7 +69,7 @@ contract StakeDistributor {
         owner = _initialOwner;
         emit OwnerUpdated(_initialOwner);
         distributionInterval = _interval;
-        lastDistribution = block.timestamp;   // prevents premature run
+        lastDistribution = block.timestamp; // prevents premature run
     }
 
     /**
@@ -103,16 +100,10 @@ contract StakeDistributor {
         lastKnownStakeBalanceRao = _initialLastKnownStakeRao;
         minDistributionIntervalSeconds = _minIntervalSeconds;
         lastDistributionTimestamp = block.timestamp; // Set initial distribution timestamp
-        
+
         _updateDistributionTargetsInternal(_initialTargets); // Internal helper
 
-        emit Initialized(
-            _multisigColdkey,
-            _associatedHotkey,
-            _netuid,
-            _initialLastKnownStakeRao,
-            _minIntervalSeconds
-        );
+        emit Initialized(_multisigColdkey, _associatedHotkey, _netuid, _initialLastKnownStakeRao, _minIntervalSeconds);
     }
 
     /**
@@ -129,27 +120,27 @@ contract StakeDistributor {
      */
     function _updateDistributionTargetsInternal(DistributionTarget[] memory _newTargets) internal {
         require(_newTargets.length > 0, "SD: Empty targets");
-        
+
         // Clear existing targets
         delete distributionTargets;
-        
+
         // Reset total ratio
         totalRatioPermille = 0;
-        
+
         // Add new targets
         for (uint256 i = 0; i < _newTargets.length; i++) {
             require(_newTargets[i].coldkey != bytes32(0), "SD: Invalid coldkey");
             require(_newTargets[i].ratioPermille > 0, "SD: Invalid ratio");
-            
+
             distributionTargets.push(_newTargets[i]);
             totalRatioPermille += _newTargets[i].ratioPermille;
         }
-        
+
         require(totalRatioPermille <= 1000, "SD: Total ratio cannot exceed 1000 permille");
-        
+
         emit DistributionTargetsUpdated(_newTargets, totalRatioPermille);
     }
-    
+
     /**
      * @dev Update the minimum interval between distributions
      * @param _newIntervalSeconds New minimum interval in seconds
@@ -190,20 +181,20 @@ contract StakeDistributor {
         view
         returns (TransferOperation[] memory operations, uint256 newExpectedStakeBalanceRao)
     {
-        if (multisigColdkeyBytes32 == bytes32(0)) { // Not initialized
+        if (multisigColdkeyBytes32 == bytes32(0)) {
+            // Not initialized
             return (new TransferOperation[](0), 0);
         }
-        if (lastDistributionTimestamp > 0 && 
-            block.timestamp < lastDistributionTimestamp + minDistributionIntervalSeconds) {
+        if (
+            lastDistributionTimestamp > 0
+                && block.timestamp < lastDistributionTimestamp + minDistributionIntervalSeconds
+        ) {
             // Not enough time has passed, return empty array
             return (new TransferOperation[](0), lastKnownStakeBalanceRao);
         }
 
-        uint256 currentStakeRao = IStakingV2(iStakingV2Precompile).getStake(
-            associatedHotkeyBytes32,
-            multisigColdkeyBytes32,
-            netuid
-        );
+        uint256 currentStakeRao =
+            IStakingV2(iStakingV2Precompile).getStake(associatedHotkeyBytes32, multisigColdkeyBytes32, netuid);
 
         if (currentStakeRao <= lastKnownStakeBalanceRao) {
             // No APY earned or stake decreased unexpectedly (manual removal not reported?)
@@ -213,18 +204,18 @@ contract StakeDistributor {
 
         uint256 apyEarnedRao = currentStakeRao - lastKnownStakeBalanceRao;
         uint256 totalToDistributeThisCycle = 0;
-        
+
         // Count non-zero operations first for correct array sizing
         uint256 opsCount = 0;
-        for(uint i = 0; i < distributionTargets.length; i++) {
+        for (uint256 i = 0; i < distributionTargets.length; i++) {
             if (apyEarnedRao > 0 && distributionTargets[i].ratioPermille > 0) {
-                 uint256 amountForTarget = (apyEarnedRao * distributionTargets[i].ratioPermille) / 1000;
-                 if (amountForTarget > 0) {
+                uint256 amountForTarget = (apyEarnedRao * distributionTargets[i].ratioPermille) / 1000;
+                if (amountForTarget > 0) {
                     opsCount++;
-                 }
+                }
             }
         }
-        
+
         TransferOperation[] memory ops = new TransferOperation[](opsCount);
         uint256 currentOpIndex = 0;
 
@@ -237,7 +228,8 @@ contract StakeDistributor {
                 if (totalToDistributeThisCycle + amountForTarget > apyEarnedRao) {
                     amountForTarget = apyEarnedRao - totalToDistributeThisCycle;
                 }
-                if (amountForTarget > 0 && currentOpIndex < opsCount) { // Check currentOpIndex boundary
+                if (amountForTarget > 0 && currentOpIndex < opsCount) {
+                    // Check currentOpIndex boundary
                     ops[currentOpIndex] = TransferOperation(distributionTargets[i].coldkey, amountForTarget);
                     totalToDistributeThisCycle += amountForTarget;
                     currentOpIndex++;
@@ -245,7 +237,7 @@ contract StakeDistributor {
             }
             if (totalToDistributeThisCycle >= apyEarnedRao) break; // Stop if all APY is allocated
         }
-        
+
         newExpectedStakeBalanceRao = currentStakeRao - totalToDistributeThisCycle;
         return (ops, newExpectedStakeBalanceRao);
     }
@@ -261,13 +253,13 @@ contract StakeDistributor {
     ) external onlyOwner {
         // It's possible _totalDistributedRao is 0 if no APY was found or ratios led to 0 for all.
         // The _actualStakeAfterDistributionRao is the most important for resetting the baseline.
-        
+
         lastKnownStakeBalanceRao = _actualStakeAfterDistributionRao;
         lastDistributionTimestamp = block.timestamp; // Set only if a distribution attempt was made.
-                                                 // Could also be `if (_totalDistributedRao > 0)`
+            // Could also be `if (_totalDistributedRao > 0)`
         emit ApyDistributed(_totalDistributedRao, lastKnownStakeBalanceRao, lastDistributionTimestamp);
     }
-    
+
     /**
      * @dev Transfer ownership of the contract
      * @param _newOwner New owner address
@@ -279,7 +271,7 @@ contract StakeDistributor {
     }
 
     // --- View Functions ---
-    
+
     /**
      * @dev Get all distribution targets
      * @return Array of distribution targets
@@ -299,16 +291,20 @@ contract StakeDistributor {
      * @return minDistInterval Minimum distribution interval
      * @return currentTotalRatio Total ratio of distribution targets
      */
-    function getConfig() external view returns (
-        address ownerAddress,
-        bytes32 coldkey,
-        bytes32 hotkey,
-        uint16 currentNetuid,
-        uint256 knownStakeRao,
-        uint256 lastDistTime,
-        uint256 minDistInterval,
-        uint16 currentTotalRatio
-    ) {
+    function getConfig()
+        external
+        view
+        returns (
+            address ownerAddress,
+            bytes32 coldkey,
+            bytes32 hotkey,
+            uint16 currentNetuid,
+            uint256 knownStakeRao,
+            uint256 lastDistTime,
+            uint256 minDistInterval,
+            uint16 currentTotalRatio
+        )
+    {
         return (
             owner,
             multisigColdkeyBytes32,
@@ -330,14 +326,11 @@ contract StakeDistributor {
     }
 
     function _enforceInterval() internal view {
-        require(
-            block.timestamp >= lastDistribution + distributionInterval,
-            "SD: interval not reached"
-        );
+        require(block.timestamp >= lastDistribution + distributionInterval, "SD: interval not reached");
     }
 
     function _distribute() internal {
         // Implementation of the distribute function
         lastDistribution = block.timestamp;
     }
-} 
+}

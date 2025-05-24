@@ -1,0 +1,10 @@
+{
+  "type": "module",
+  "devDependencies": {
+    "xxhashjs": "^0.2.2"
+  },
+  "dependencies": {
+    "@polkadot/util-crypto": "^12.6.2",
+    "@polkadot/util": "^12.6.2"
+  }
+}
