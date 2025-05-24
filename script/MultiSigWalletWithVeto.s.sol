@@ -39,7 +39,7 @@ contract MultiSigWalletWithVetoScript is Script {
         console.log("MultiSigWalletWithVeto deployed at:", address(wallet));
     }
 
-    function getInitialOwners() internal returns (address[] memory) {
+    function getInitialOwners() internal view returns (address[] memory) {
         string memory ownersStr = vm.envOr("INITIAL_OWNERS", string(""));
 
         // If no owners provided via env, use default test owners
@@ -89,11 +89,11 @@ contract MultiSigWalletWithVetoScript is Script {
         return owners;
     }
 
-    function getVetoesRequired() internal returns (uint256) {
+    function getVetoesRequired() internal view returns (uint256) {
         return vm.envOr("VETOES_REQUIRED", DEFAULT_VETO_REQUIREMENT);
     }
 
-    function getVetoDuration() internal returns (uint256) {
+    function getVetoDuration() internal view returns (uint256) {
         return vm.envOr("VETO_DURATION", DEFAULT_VETO_DURATION);
     }
 

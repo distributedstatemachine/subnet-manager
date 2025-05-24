@@ -86,7 +86,7 @@ contract MultiSigWalletWithVetoTest is Test {
         target = new TestTarget();
     }
 
-    function test_Constructor() public {
+    function test_Constructor() public view {
         // Check initial state
         assertEq(wallet.ownerCount(), 4);
         assertEq(wallet.vetoesRequiredToCancel(), VETO_REQUIREMENT);

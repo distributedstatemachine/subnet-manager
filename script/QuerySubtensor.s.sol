@@ -21,7 +21,7 @@ contract QuerySubtensorScript is Script {
         console.log("Using SubtensorReader at:", address(reader));
     }
 
-    function run() public {
+    function run() public view {
         uint16 netuidToQuery = uint16(vm.envOr("NETUID_QUERY", uint256(0)));
         console.log("Querying Subtensor storage for netuid:", netuidToQuery);
         console.log("Targeting precompile via SubtensorReader:", PRECOMPILE_ADDR);

@@ -42,11 +42,11 @@ contract StakeDistributorScript is Script {
         console.log("3. Configure the off-chain Keeper to monitor and trigger distributions");
     }
 
-    function getStakingPrecompileAddress() internal returns (address) {
+    function getStakingPrecompileAddress() internal view returns (address) {
         return vm.envOr("STAKING_PRECOMPILE", DEFAULT_STAKING_PRECOMPILE);
     }
 
-    function getMultiSigWalletAddress() internal returns (address) {
+    function getMultiSigWalletAddress() internal view returns (address) {
         string memory walletAddrStr = vm.envOr("MULTISIG_WALLET", string(""));
 
         if (bytes(walletAddrStr).length == 0) {
@@ -58,7 +58,7 @@ contract StakeDistributorScript is Script {
         return vm.parseAddress(walletAddrStr);
     }
 
-    function getDistributionInterval() internal returns (uint256) {
+    function getDistributionInterval() internal view returns (uint256) {
         return vm.envOr("DISTRIBUTION_INTERVAL", DEFAULT_DISTRIBUTION_INTERVAL);
     }
 }

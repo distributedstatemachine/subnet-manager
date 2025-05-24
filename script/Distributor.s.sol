@@ -55,7 +55,7 @@ contract DistributorScript is Script {
         console.log("4. Monitor the contract for PrincipalDetected events when adding stake");
     }
 
-    function getOwnerAddress() internal returns (address) {
+    function getOwnerAddress() internal view returns (address) {
         string memory ownerStr = vm.envOr("DISTRIBUTOR_OWNER", string(""));
 
         if (bytes(ownerStr).length == 0) {
@@ -66,16 +66,16 @@ contract DistributorScript is Script {
         return vm.parseAddress(ownerStr);
     }
 
-    function getValidatorHotkey() internal returns (bytes32) {
+    function getValidatorHotkey() internal view returns (bytes32) {
         string memory hotkeyStr = vm.envString("VALIDATOR_HOTKEY");
         return vm.parseBytes32(hotkeyStr);
     }
 
-    function getNetuid() internal returns (uint16) {
+    function getNetuid() internal view returns (uint16) {
         return uint16(vm.envUint("NETUID"));
     }
 
-    function getRecipientColdkeys() internal returns (bytes32[] memory) {
+    function getRecipientColdkeys() internal view returns (bytes32[] memory) {
         string memory coldkeysStr = vm.envString("RECIPIENT_COLDKEYS");
 
         // Parse comma-separated list of coldkeys
@@ -114,7 +114,7 @@ contract DistributorScript is Script {
         return coldkeys;
     }
 
-    function getProportions() internal returns (uint256[] memory) {
+    function getProportions() internal view returns (uint256[] memory) {
         string memory proportionsStr = vm.envString("RECIPIENT_PROPORTIONS");
 
         // Parse comma-separated list of proportions

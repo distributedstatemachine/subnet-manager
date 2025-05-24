@@ -21,15 +21,15 @@ contract MockStakingV2 {
     }
 
     function transferStake(
-        bytes32 destinationColdkey,
-        bytes32 hotkey,
+        bytes32, // destinationColdkey - unused
+        bytes32 originHotkey,
         uint16 originNetuid,
-        uint16 destinationNetuid,
+        uint16, // destinationNetuid - unused  
         uint256 amountAlpha
     ) external {
         // Mock implementation - just reduce the stake
-        if (stakes[hotkey][msg.sender][originNetuid] >= amountAlpha) {
-            stakes[hotkey][msg.sender][originNetuid] -= amountAlpha;
+        if (stakes[originHotkey][msg.sender][originNetuid] >= amountAlpha) {
+            stakes[originHotkey][msg.sender][originNetuid] -= amountAlpha;
         }
     }
 
@@ -84,7 +84,7 @@ contract StakeDistributorTest is Test {
         mockStaking.setStake(HOTKEY, COLDKEY, NETUID, INITIAL_STAKE);
     }
 
-    function test_Constructor() public {
+    function test_Constructor() public view {
         assertEq(distributor.iStakingV2Precompile(), address(mockStaking));
         assertEq(distributor.owner(), address(wallet));
     }

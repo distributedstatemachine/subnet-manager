@@ -101,7 +101,7 @@ contract SubtensorReaderTest is Test {
         assertEq(result, 14649, "Incorrect value decoded");
     }
 
-    function testSubnetTaoInEmission_Netuid1() public {
+    function testSubnetTaoInEmission_Netuid1() public pure {
         bytes memory expectedNetuidBytes = hex"0100";
         bytes memory expectedFullKey = abi.encodePacked(STIE_PREFIX, expectedNetuidBytes);
 
