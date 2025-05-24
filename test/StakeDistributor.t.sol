@@ -24,7 +24,7 @@ contract MockStakingV2 {
         bytes32, // destinationColdkey - unused
         bytes32 originHotkey,
         uint16 originNetuid,
-        uint16, // destinationNetuid - unused  
+        uint16, // destinationNetuid - unused
         uint256 amountAlpha
     ) external {
         // Mock implementation - just reduce the stake
