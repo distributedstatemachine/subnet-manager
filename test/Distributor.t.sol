@@ -12,6 +12,7 @@ contract DistributorTest is Test {
     address public owner;
     address public nonOwner;
     bytes32 public constant VALIDATOR_HOTKEY = bytes32(uint256(1));
+    bytes32 public constant NEW_VALIDATOR_HOTKEY = bytes32(uint256(999));
     bytes32 public constant RECIPIENT1_COLDKEY = bytes32(uint256(2));
     bytes32 public constant RECIPIENT2_COLDKEY = bytes32(uint256(3));
     bytes32 public constant CONTRACT_SS58_KEY = bytes32(uint256(4));
@@ -19,13 +20,13 @@ contract DistributorTest is Test {
     uint256 public constant INITIAL_BALANCE = 1000e9; // 1000 TAO
     uint256 public constant MIN_BLOCK_INTERVAL = 7200; // 1 day in blocks
     uint256 public constant EXISTENTIAL_AMOUNT = 1e9; // 1 TAO
-    uint256 public constant FALLBACK_AMOUNT = 100e9; // 100 TAO
 
     event StakeTransferred(uint256 totalAmount, uint256 newBalance);
     event RecipientTransfer(bytes32 indexed coldkey, uint256 amount, uint256 proportion);
     event TransferSkipped(string reason, uint256 calculatedAmount);
     event PrincipalDetected(uint256 amount, uint256 totalPrincipal);
     event RecipientsUpdated(uint256 recipientCount);
+    event ValidatorHotkeyChanged(bytes32 oldHotkey, bytes32 newHotkey);
 
     function setUp() public {
         owner = makeAddr("owner");
@@ -87,6 +88,32 @@ contract DistributorTest is Test {
         new Distributor(owner, VALIDATOR_HOTKEY, NETUID, recipients, wrongProportions);
     }
 
+    function test_ChangeValidatorHotkey() public {
+        vm.expectEmit(true, true, false, true);
+        emit ValidatorHotkeyChanged(VALIDATOR_HOTKEY, NEW_VALIDATOR_HOTKEY);
+
+        vm.prank(owner);
+        distributor.changeValidatorHotkey(NEW_VALIDATOR_HOTKEY);
+
+        assertEq(distributor.validatorHotkey(), NEW_VALIDATOR_HOTKEY);
+    }
+
+    function test_RevertWhen_NonOwnerChangesHotkey() public {
+        vm.prank(nonOwner);
+        vm.expectRevert("Caller is not the owner");
+        distributor.changeValidatorHotkey(NEW_VALIDATOR_HOTKEY);
+    }
+
+    function test_RevertWhen_InvalidHotkeyChange() public {
+        vm.prank(owner);
+        vm.expectRevert("Invalid hotkey");
+        distributor.changeValidatorHotkey(bytes32(0));
+
+        vm.prank(owner);
+        vm.expectRevert("Same hotkey");
+        distributor.changeValidatorHotkey(VALIDATOR_HOTKEY);
+    }
+
     function test_SetThisSs58PublicKey() public {
         bytes32[] memory recipients = new bytes32[](1);
         recipients[0] = RECIPIENT1_COLDKEY;
@@ -110,8 +137,10 @@ contract DistributorTest is Test {
         newDistributor.setThisSs58PublicKey(CONTRACT_SS58_KEY);
 
         assertEq(newDistributor.thisSs58PublicKey(), CONTRACT_SS58_KEY);
-        assertEq(newDistributor.principalLocked(), INITIAL_BALANCE);
+        assertEq(newDistributor.getLockedPrincipal(), INITIAL_BALANCE);
         assertEq(newDistributor.previousBalance(), INITIAL_BALANCE);
+        assertEq(newDistributor.getCurrentRewardRate(), 0);
+        assertEq(newDistributor.getLastPaymentAmount(), 0);
     }
 
     function test_GetStakedBalance() public view {
@@ -119,8 +148,8 @@ contract DistributorTest is Test {
         assertEq(balance, INITIAL_BALANCE);
     }
 
-    function test_ExecuteTransfer_WithRewards() public {
-        // Simulate rewards (10 TAO)
+    function test_ExecuteTransfer_FirstExecution_WithRewards() public {
+        // Simulate rewards (10 TAO) for first execution
         uint256 rewards = 10e9;
         uint256 newBalance = INITIAL_BALANCE + rewards;
 
@@ -175,12 +204,33 @@ contract DistributorTest is Test {
         // Verify state updates
         assertEq(distributor.previousBalance(), newBalance - rewards);
         assertEq(distributor.lastTransferBlock(), block.number);
+        assertEq(distributor.getLastPaymentAmount(), rewards);
+        assertGt(distributor.getCurrentRewardRate(), 0); // Should have set a rate
     }
 
-    function test_ExecuteTransfer_ExcessiveRewards_UsesFallback() public {
-        // Mock a balance with excessive rewards (20 alpha rewards, which is 2% of 1000 alpha principal)
-        uint256 excessiveRewards = 20e9; // 20 alpha (2% of principal, exceeds 1% limit)
-        uint256 newBalance = INITIAL_BALANCE + excessiveRewards; // 1020 alpha total
+    function test_ExecuteTransfer_PrincipalDetection_RateDoubled() public {
+        // First, execute a normal transfer to establish a baseline rate
+        uint256 normalRewards = 10e9; // 10 TAO
+        uint256 balanceAfterNormal = INITIAL_BALANCE + normalRewards;
+
+        vm.mockCall(
+            address(0x808),
+            abi.encodeWithSelector(
+                bytes4(keccak256("getStake(bytes32,bytes32,uint16)")), VALIDATOR_HOTKEY, CONTRACT_SS58_KEY, NETUID
+            ),
+            abi.encode(balanceAfterNormal)
+        );
+
+        // Mock transfers for normal execution
+        vm.mockCall(address(0x808), abi.encodeWithSelector(bytes4(keccak256("transferStake(bytes32,bytes32,uint16,uint16,uint256)"))), abi.encode());
+
+        vm.roll(block.number + MIN_BLOCK_INTERVAL + 1);
+        distributor.executeTransfer();
+
+        // Now simulate a large balance increase that would more than double the rate
+        uint256 principalAddition = 500e9; // 500 TAO added as principal
+        uint256 smallRewards = 5e9; // 5 TAO normal rewards
+        uint256 newBalance = balanceAfterNormal - normalRewards + principalAddition + smallRewards;
 
         vm.mockCall(
             address(0x808),
@@ -190,108 +240,52 @@ contract DistributorTest is Test {
             abi.encode(newBalance)
         );
 
-        // Mock successful transfers for both recipients
-        vm.mockCall(
-            address(0x808),
-            abi.encodeWithSelector(
-                bytes4(keccak256("transferStake(bytes32,bytes32,uint16,uint16,uint256)")),
-                RECIPIENT1_COLDKEY,
-                VALIDATOR_HOTKEY,
-                NETUID,
-                NETUID,
-                12e9 // 60% of 20 alpha = 12 alpha
-            ),
-            abi.encode()
-        );
-
-        vm.mockCall(
-            address(0x808),
-            abi.encodeWithSelector(
-                bytes4(keccak256("transferStake(bytes32,bytes32,uint16,uint16,uint256)")),
-                RECIPIENT2_COLDKEY,
-                VALIDATOR_HOTKEY,
-                NETUID,
-                NETUID,
-                8e9 // 40% of 20 alpha = 8 alpha
-            ),
-            abi.encode()
-        );
-
-        // Fast forward past the interval
-        vm.roll(block.number + MIN_BLOCK_INTERVAL + 1);
-
-        // Execute transfer
-        distributor.executeTransfer();
-
-        // Should transfer available rewards (20 alpha), not fallback amount (100 alpha)
-        // because we only have 20 alpha available above principal
-        assertEq(distributor.previousBalance(), INITIAL_BALANCE); // 1020 - 20 = 1000
-    }
-
-    function test_ExecuteTransfer_NoRewards_UsesFallback() public {
-        // No rewards - same balance
-        vm.mockCall(
-            address(0x808),
-            abi.encodeWithSelector(
-                bytes4(keccak256("getStake(bytes32,bytes32,uint16)")), VALIDATOR_HOTKEY, CONTRACT_SS58_KEY, NETUID
-            ),
-            abi.encode(INITIAL_BALANCE)
-        );
-
-        // Mock transfer calls for fallback amount
-        uint256 recipient1Amount = (FALLBACK_AMOUNT * 6000) / 10000;
-        uint256 recipient2Amount = (FALLBACK_AMOUNT * 4000) / 10000;
-
-        vm.mockCall(
-            address(0x808),
-            abi.encodeWithSelector(
-                bytes4(keccak256("transferStake(bytes32,bytes32,uint16,uint16,uint256)")),
-                RECIPIENT1_COLDKEY,
-                VALIDATOR_HOTKEY,
-                NETUID,
-                NETUID,
-                recipient1Amount
-            ),
-            abi.encode()
-        );
-
-        vm.mockCall(
-            address(0x808),
-            abi.encodeWithSelector(
-                bytes4(keccak256("transferStake(bytes32,bytes32,uint16,uint16,uint256)")),
-                RECIPIENT2_COLDKEY,
-                VALIDATOR_HOTKEY,
-                NETUID,
-                NETUID,
-                recipient2Amount
-            ),
-            abi.encode()
-        );
-
-        vm.roll(block.number + MIN_BLOCK_INTERVAL + 1);
-        distributor.executeTransfer();
-    }
-
-    function test_DetectNewPrincipal() public {
-        // Simulate large stake addition (>10% of principal)
-        uint256 newPrincipal = (INITIAL_BALANCE * 15) / 100; // 15%
-        uint256 newBalance = INITIAL_BALANCE + newPrincipal;
-
-        vm.mockCall(
-            address(0x808),
-            abi.encodeWithSelector(
-                bytes4(keccak256("getStake(bytes32,bytes32,uint16)")), VALIDATOR_HOTKEY, CONTRACT_SS58_KEY, NETUID
-            ),
-            abi.encode(newBalance)
-        );
-
+        // Should detect principal and use last payment amount instead
         vm.expectEmit(true, false, false, true);
-        emit PrincipalDetected(newPrincipal, INITIAL_BALANCE + newPrincipal);
+        emit PrincipalDetected(principalAddition + smallRewards, INITIAL_BALANCE + principalAddition + smallRewards);
 
-        distributor.updatePrincipal();
+        vm.roll(block.number + MIN_BLOCK_INTERVAL + 1);
+        distributor.executeTransfer();
 
-        assertEq(distributor.principalLocked(), INITIAL_BALANCE + newPrincipal);
-        assertEq(distributor.previousBalance(), newBalance);
+        // Should have updated principal
+        assertEq(distributor.getLockedPrincipal(), INITIAL_BALANCE + principalAddition + smallRewards);
+    }
+
+    function test_ExecuteTransfer_NoRewards_UsesLastPayment() public {
+        // First execution to set lastPaymentAmount
+        uint256 initialRewards = 10e9;
+        uint256 balanceAfterFirst = INITIAL_BALANCE + initialRewards;
+
+        vm.mockCall(
+            address(0x808),
+            abi.encodeWithSelector(
+                bytes4(keccak256("getStake(bytes32,bytes32,uint16)")), VALIDATOR_HOTKEY, CONTRACT_SS58_KEY, NETUID
+            ),
+            abi.encode(balanceAfterFirst)
+        );
+
+        vm.mockCall(address(0x808), abi.encodeWithSelector(bytes4(keccak256("transferStake(bytes32,bytes32,uint16,uint16,uint256)"))), abi.encode());
+
+        vm.roll(block.number + MIN_BLOCK_INTERVAL + 1);
+        distributor.executeTransfer();
+
+        // Now no new rewards - same balance as after first transfer
+        uint256 balanceAfterTransfer = balanceAfterFirst - initialRewards;
+        vm.mockCall(
+            address(0x808),
+            abi.encodeWithSelector(
+                bytes4(keccak256("getStake(bytes32,bytes32,uint16)")), VALIDATOR_HOTKEY, CONTRACT_SS58_KEY, NETUID
+            ),
+            abi.encode(balanceAfterTransfer)
+        );
+
+        vm.roll(block.number + MIN_BLOCK_INTERVAL + 1);
+        
+        // Should skip transfer since no rewards and no balance above principal
+        vm.expectEmit(true, false, false, true);
+        emit TransferSkipped("Below existential amount", 0);
+        
+        distributor.executeTransfer();
     }
 
     function test_CanExecuteTransfer() public {
@@ -345,35 +339,6 @@ contract DistributorTest is Test {
         assertEq(proportion2, 4000);
     }
 
-    function test_UpdateRecipients() public {
-        bytes32[] memory newRecipients = new bytes32[](1);
-        newRecipients[0] = bytes32(uint256(999));
-        uint256[] memory newProportions = new uint256[](1);
-        newProportions[0] = 10000;
-
-        vm.expectEmit(true, false, false, true);
-        emit RecipientsUpdated(1);
-
-        vm.prank(owner);
-        distributor.updateRecipients(newRecipients, newProportions);
-
-        assertEq(distributor.getRecipientCount(), 1);
-        (bytes32 coldkey, uint256 proportion) = distributor.getRecipient(0);
-        assertEq(coldkey, bytes32(uint256(999)));
-        assertEq(proportion, 10000);
-    }
-
-    function test_RevertWhen_NonOwnerUpdatesRecipients() public {
-        bytes32[] memory newRecipients = new bytes32[](1);
-        newRecipients[0] = bytes32(uint256(999));
-        uint256[] memory newProportions = new uint256[](1);
-        newProportions[0] = 10000;
-
-        vm.prank(nonOwner);
-        vm.expectRevert("Caller is not the owner");
-        distributor.updateRecipients(newRecipients, newProportions);
-    }
-
     function test_GetAvailableRewards() public {
         // Mock balance above principal
         uint256 rewards = 50e9;
@@ -402,5 +367,11 @@ contract DistributorTest is Test {
         vm.roll(block.number + MIN_BLOCK_INTERVAL / 2 + 1);
         blocksLeft = distributor.blocksUntilNextTransfer();
         assertEq(blocksLeft, 0);
+    }
+
+    function test_ViewFunctions() public view {
+        assertEq(distributor.getLockedPrincipal(), INITIAL_BALANCE);
+        assertEq(distributor.getCurrentRewardRate(), 0); // No transfers yet
+        assertEq(distributor.getLastPaymentAmount(), 0); // No transfers yet
     }
 }

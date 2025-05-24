@@ -25,10 +25,12 @@ contract Distributor {
     uint256 public previousBalance;
     uint256 public lastTransferBlock;
     uint256 public principalLocked; // Total principal that can never be touched
+    uint256 public lastRewardRate; // Alpha per block from last transfer
+    uint256 public lastPaymentAmount; // Last successful payment amount
     uint256 public constant MIN_BLOCK_INTERVAL = 7200; // 1 day = 7200 blocks (12s each)
     uint256 public constant EXISTENTIAL_AMOUNT = 1e9; // 1 TAO (9 decimals)
-    uint256 public constant FALLBACK_AMOUNT = 100e9; // 100 TAO
     uint256 public constant BASIS_POINTS = 10000; // 100% = 10000 basis points
+    uint256 public constant RATE_MULTIPLIER_THRESHOLD = 2; // 2x rate increase threshold
 
     address public owner; // Only for emergency functions, cannot touch principal
 
@@ -42,6 +44,7 @@ contract Distributor {
     event TransferSkipped(string reason, uint256 calculatedAmount);
     event PrincipalDetected(uint256 amount, uint256 totalPrincipal);
     event RecipientsUpdated(uint256 recipientCount);
+    event ValidatorHotkeyChanged(bytes32 oldHotkey, bytes32 newHotkey);
 
     constructor(
         address _owner,
@@ -85,6 +88,17 @@ contract Distributor {
         emit RecipientsUpdated(recipients.length);
     }
 
+    // Owner-only method to change validator hotkey
+    function changeValidatorHotkey(bytes32 newHotkey) external onlyOwner {
+        require(newHotkey != bytes32(0), "Invalid hotkey");
+        require(newHotkey != validatorHotkey, "Same hotkey");
+        
+        bytes32 oldHotkey = validatorHotkey;
+        validatorHotkey = newHotkey;
+        
+        emit ValidatorHotkeyChanged(oldHotkey, newHotkey);
+    }
+
     // Owner-only method to set this contract's ss58 public key
     function setThisSs58PublicKey(bytes32 publicKey) external onlyOwner {
         thisSs58PublicKey = publicKey;
@@ -94,6 +108,8 @@ contract Distributor {
             uint256 currentBalance = getStakedBalance();
             previousBalance = currentBalance;
             principalLocked = currentBalance; // All initial balance is considered principal
+            lastRewardRate = 0; // No previous rate on first setup
+            lastPaymentAmount = 0; // No previous payment
 
             if (currentBalance > 0) {
                 emit PrincipalDetected(currentBalance, principalLocked);
@@ -119,28 +135,6 @@ contract Distributor {
         require(success, "Transfer stake call failed");
     }
 
-    // Detects and records new principal additions automatically
-    function updatePrincipal() external {
-        require(thisSs58PublicKey != 0, "Public key is not set");
-
-        uint256 currentBalance = getStakedBalance();
-
-        // If balance increased beyond expected rewards, it's new principal
-        if (currentBalance > previousBalance) {
-            uint256 increase = currentBalance - previousBalance;
-
-            // Assume any large increase (>10% of current principal) is new principal
-            // This helps distinguish between rewards and principal additions
-            uint256 tenPercentOfPrincipal = principalLocked / 10;
-
-            if (increase > tenPercentOfPrincipal || principalLocked == 0) {
-                principalLocked += increase;
-                previousBalance = currentBalance;
-                emit PrincipalDetected(increase, principalLocked);
-            }
-        }
-    }
-
     // Daily reward distribution - transfers only the staking rewards
     function executeTransfer() external {
         require(block.number >= lastTransferBlock + MIN_BLOCK_INTERVAL, "Too soon");
@@ -148,11 +142,10 @@ contract Distributor {
         require(principalLocked > 0, "No principal locked");
         require(recipients.length > 0, "No recipients configured");
 
-        // Check for new principal first
         uint256 currentBalance = getStakedBalance();
-        _detectNewPrincipal(currentBalance);
-
-        uint256 transferAmount = _calculateTransferAmount(currentBalance);
+        uint256 blocksPassed = block.number - lastTransferBlock;
+        
+        uint256 transferAmount = _calculateTransferAmountWithRateAnalysis(currentBalance, blocksPassed);
 
         if (transferAmount < EXISTENTIAL_AMOUNT) {
             emit TransferSkipped("Below existential amount", transferAmount);
@@ -169,21 +162,53 @@ contract Distributor {
         // Update state
         previousBalance = balanceAfterTransfer;
         lastTransferBlock = block.number;
+        lastPaymentAmount = transferAmount;
 
         emit StakeTransferred(transferAmount, previousBalance);
     }
 
-    function _detectNewPrincipal(uint256 currentBalance) internal {
-        if (currentBalance > previousBalance) {
-            uint256 increase = currentBalance - previousBalance;
-            uint256 tenPercentOfPrincipal = principalLocked / 10;
-
-            if (increase > tenPercentOfPrincipal) {
-                principalLocked += increase;
-                previousBalance = currentBalance;
-                emit PrincipalDetected(increase, principalLocked);
+    function _calculateTransferAmountWithRateAnalysis(uint256 currentBalance, uint256 blocksPassed) internal returns (uint256) {
+        // Handle first execution case
+        if (lastRewardRate == 0 && lastPaymentAmount == 0) {
+            // First execution - any balance above principal is rewards
+            uint256 availableRewards = currentBalance > principalLocked ? currentBalance - principalLocked : 0;
+            if (availableRewards > 0 && blocksPassed > 0) {
+                lastRewardRate = (availableRewards * 1e18) / blocksPassed; // Store with precision
             }
+            return availableRewards;
         }
+
+        // Calculate delta and current rate
+        uint256 deltaBalance = currentBalance > previousBalance ? currentBalance - previousBalance : 0;
+        
+        if (deltaBalance == 0) {
+            // No rewards earned - use last payment amount if we have enough above principal
+            uint256 availableAbovePrincipal = currentBalance > principalLocked ? currentBalance - principalLocked : 0;
+            return availableAbovePrincipal >= lastPaymentAmount ? lastPaymentAmount : availableAbovePrincipal;
+        }
+
+        if (blocksPassed == 0) {
+            // Edge case: same block execution
+            return deltaBalance;
+        }
+
+        uint256 currentRate = (deltaBalance * 1e18) / blocksPassed; // Store with precision
+
+        // Check if rate more than doubled (indicating principal addition)
+        if (lastRewardRate > 0 && currentRate > lastRewardRate * RATE_MULTIPLIER_THRESHOLD) {
+            // Likely principal addition detected
+            principalLocked += deltaBalance;
+            previousBalance = currentBalance;
+            emit PrincipalDetected(deltaBalance, principalLocked);
+            
+            // Use last payment amount instead of the inflated delta
+            uint256 availableAbovePrincipal = currentBalance > principalLocked ? currentBalance - principalLocked : 0;
+            return availableAbovePrincipal >= lastPaymentAmount ? lastPaymentAmount : availableAbovePrincipal;
+        }
+
+        // Normal rewards - update rate and return delta
+        lastRewardRate = currentRate;
+        return deltaBalance;
     }
 
     function _distributeToRecipients(uint256 totalAmount) internal {
@@ -197,33 +222,34 @@ contract Distributor {
         }
     }
 
-    function _calculateTransferAmount(uint256 currentBalance) internal view returns (uint256) {
-        // Calculate available rewards above principal
-        uint256 availableAbovePrincipal = currentBalance > principalLocked ? currentBalance - principalLocked : 0;
-
-        // Only transfer rewards earned since last transfer
-        if (currentBalance <= previousBalance) {
-            // No rewards earned - transfer fallback amount if we have enough above principal
-            return availableAbovePrincipal < FALLBACK_AMOUNT ? availableAbovePrincipal : FALLBACK_AMOUNT;
-        }
-
-        uint256 rewardsEarned = currentBalance - previousBalance;
-
-        // If rewards exceed 1% of principal, cap at fallback amount
-        uint256 onePercentOfPrincipal = principalLocked / 100;
-        if (rewardsEarned > onePercentOfPrincipal) {
-            // Cap at fallback amount, but don't exceed what's available above principal
-            return availableAbovePrincipal < FALLBACK_AMOUNT ? availableAbovePrincipal : FALLBACK_AMOUNT;
-        }
-
-        return rewardsEarned;
-    }
-
     // View functions
     function getNextTransferAmount() external view returns (uint256) {
         if (thisSs58PublicKey == 0 || principalLocked == 0) return 0;
         uint256 currentBalance = getStakedBalance();
-        return _calculateTransferAmount(currentBalance);
+        uint256 blocksPassed = block.number - lastTransferBlock;
+        
+        // Simplified view version without state updates
+        if (lastRewardRate == 0 && lastPaymentAmount == 0) {
+            return currentBalance > principalLocked ? currentBalance - principalLocked : 0;
+        }
+
+        uint256 deltaBalance = currentBalance > previousBalance ? currentBalance - previousBalance : 0;
+        
+        if (deltaBalance == 0) {
+            uint256 availableAbovePrincipal = currentBalance > principalLocked ? currentBalance - principalLocked : 0;
+            return availableAbovePrincipal >= lastPaymentAmount ? lastPaymentAmount : availableAbovePrincipal;
+        }
+
+        if (blocksPassed == 0) return deltaBalance;
+
+        uint256 currentRate = (deltaBalance * 1e18) / blocksPassed;
+        
+        if (lastRewardRate > 0 && currentRate > lastRewardRate * RATE_MULTIPLIER_THRESHOLD) {
+            uint256 availableAbovePrincipal = currentBalance > principalLocked ? currentBalance - principalLocked : 0;
+            return availableAbovePrincipal >= lastPaymentAmount ? lastPaymentAmount : availableAbovePrincipal;
+        }
+
+        return deltaBalance;
     }
 
     function canExecuteTransfer() external view returns (bool) {
@@ -232,7 +258,31 @@ contract Distributor {
         if (recipients.length == 0) return false;
 
         uint256 currentBalance = getStakedBalance();
-        uint256 transferAmount = _calculateTransferAmount(currentBalance);
+        uint256 blocksPassed = block.number - lastTransferBlock;
+        
+        // Use view version of calculation
+        uint256 transferAmount;
+        if (lastRewardRate == 0 && lastPaymentAmount == 0) {
+            transferAmount = currentBalance > principalLocked ? currentBalance - principalLocked : 0;
+        } else {
+            uint256 deltaBalance = currentBalance > previousBalance ? currentBalance - previousBalance : 0;
+            
+            if (deltaBalance == 0) {
+                uint256 availableAbovePrincipal = currentBalance > principalLocked ? currentBalance - principalLocked : 0;
+                transferAmount = availableAbovePrincipal >= lastPaymentAmount ? lastPaymentAmount : availableAbovePrincipal;
+            } else if (blocksPassed == 0) {
+                transferAmount = deltaBalance;
+            } else {
+                uint256 currentRate = (deltaBalance * 1e18) / blocksPassed;
+                
+                if (lastRewardRate > 0 && currentRate > lastRewardRate * RATE_MULTIPLIER_THRESHOLD) {
+                    uint256 availableAbovePrincipal = currentBalance > principalLocked ? currentBalance - principalLocked : 0;
+                    transferAmount = availableAbovePrincipal >= lastPaymentAmount ? lastPaymentAmount : availableAbovePrincipal;
+                } else {
+                    transferAmount = deltaBalance;
+                }
+            }
+        }
 
         return transferAmount >= EXISTENTIAL_AMOUNT;
     }
@@ -259,21 +309,18 @@ contract Distributor {
         return (recipient.coldkey, recipient.proportion);
     }
 
-    // Owner functions to update recipients (but never touch principal)
-    //  TODO: confirm if we want to keep this
-    function updateRecipients(bytes32[] memory _coldkeys, uint256[] memory _proportions) external onlyOwner {
-        _setRecipients(_coldkeys, _proportions);
-    }
-
-    //  TODO: confirm if we want to keep this
-    // Emergency withdraw (if contract receives native tokens, NOT staked tokens)
-    function withdraw() external onlyOwner {
-        (bool success,) = msg.sender.call{value: address(this).balance}("");
-        require(success, "Transfer failed");
-    }
-
     // View the locked principal (can never be withdrawn)
     function getLockedPrincipal() external view returns (uint256) {
         return principalLocked;
+    }
+
+    // View current reward rate (alpha per block with 1e18 precision)
+    function getCurrentRewardRate() external view returns (uint256) {
+        return lastRewardRate;
+    }
+
+    // View last payment amount
+    function getLastPaymentAmount() external view returns (uint256) {
+        return lastPaymentAmount;
     }
 }
