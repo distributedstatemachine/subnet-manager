@@ -89,6 +89,29 @@ contract DistributorTest is Test {
     }
 
     function test_ChangeValidatorHotkey() public {
+        // Mock the current stake balance
+        vm.mockCall(
+            address(0x808),
+            abi.encodeWithSelector(
+                bytes4(keccak256("getStake(bytes32,bytes32,uint16)")), VALIDATOR_HOTKEY, CONTRACT_SS58_KEY, NETUID
+            ),
+            abi.encode(INITIAL_BALANCE)
+        );
+
+        // Mock the moveStake call
+        vm.mockCall(
+            address(0x808),
+            abi.encodeWithSelector(
+                bytes4(keccak256("moveStake(bytes32,bytes32,uint16,uint16,uint256)")),
+                VALIDATOR_HOTKEY, // originHotkey
+                NEW_VALIDATOR_HOTKEY, // destinationHotkey
+                NETUID, // originNetuid
+                NETUID, // destinationNetuid
+                INITIAL_BALANCE // amountAlpha
+            ),
+            abi.encode()
+        );
+
         vm.expectEmit(true, true, false, true);
         emit ValidatorHotkeyChanged(VALIDATOR_HOTKEY, NEW_VALIDATOR_HOTKEY);
 
@@ -96,6 +119,80 @@ contract DistributorTest is Test {
         distributor.changeValidatorHotkey(NEW_VALIDATOR_HOTKEY);
 
         assertEq(distributor.validatorHotkey(), NEW_VALIDATOR_HOTKEY);
+    }
+
+    function test_ChangeValidatorHotkey_NoStake() public {
+        // Create new distributor without setting public key (no stake)
+        bytes32[] memory recipients = new bytes32[](1);
+        recipients[0] = RECIPIENT1_COLDKEY;
+        uint256[] memory proportions = new uint256[](1);
+        proportions[0] = 10000;
+
+        Distributor newDistributor = new Distributor(owner, VALIDATOR_HOTKEY, NETUID, recipients, proportions);
+
+        // Set public key but mock zero balance
+        vm.mockCall(
+            address(0x808),
+            abi.encodeWithSelector(
+                bytes4(keccak256("getStake(bytes32,bytes32,uint16)")), VALIDATOR_HOTKEY, CONTRACT_SS58_KEY, NETUID
+            ),
+            abi.encode(0)
+        );
+
+        vm.prank(owner);
+        newDistributor.setThisSs58PublicKey(CONTRACT_SS58_KEY);
+
+        // Should change hotkey without calling moveStake (no stake to move)
+        vm.expectEmit(true, true, false, true);
+        emit ValidatorHotkeyChanged(VALIDATOR_HOTKEY, NEW_VALIDATOR_HOTKEY);
+
+        vm.prank(owner);
+        newDistributor.changeValidatorHotkey(NEW_VALIDATOR_HOTKEY);
+
+        assertEq(newDistributor.validatorHotkey(), NEW_VALIDATOR_HOTKEY);
+    }
+
+    function test_RevertWhen_ChangeHotkeyWithoutPublicKey() public {
+        // Create new distributor without setting public key
+        bytes32[] memory recipients = new bytes32[](1);
+        recipients[0] = RECIPIENT1_COLDKEY;
+        uint256[] memory proportions = new uint256[](1);
+        proportions[0] = 10000;
+
+        Distributor newDistributor = new Distributor(owner, VALIDATOR_HOTKEY, NETUID, recipients, proportions);
+
+        vm.prank(owner);
+        vm.expectRevert("Public key not set");
+        newDistributor.changeValidatorHotkey(NEW_VALIDATOR_HOTKEY);
+    }
+
+    function test_RevertWhen_MoveStakeFails() public {
+        // Mock the current stake balance
+        vm.mockCall(
+            address(0x808),
+            abi.encodeWithSelector(
+                bytes4(keccak256("getStake(bytes32,bytes32,uint16)")), VALIDATOR_HOTKEY, CONTRACT_SS58_KEY, NETUID
+            ),
+            abi.encode(INITIAL_BALANCE)
+        );
+
+        // Mock moveStake to return false (failure)
+        vm.mockCallRevert(
+            address(0x808),
+            abi.encodeWithSelector(
+                bytes4(keccak256("moveStake(bytes32,bytes32,uint16,uint16,uint256)")),
+                VALIDATOR_HOTKEY,
+                NEW_VALIDATOR_HOTKEY,
+                NETUID,
+                NETUID,
+                INITIAL_BALANCE
+            ),
+            "Move stake failed"
+        );
+
+        vm.prank(owner);
+        vm.expectRevert("Move stake call failed");
+        distributor.changeValidatorHotkey(NEW_VALIDATOR_HOTKEY);
     }
 
     function test_RevertWhen_NonOwnerChangesHotkey() public {
@@ -222,7 +319,11 @@ contract DistributorTest is Test {
         );
 
         // Mock transfers for normal execution
-        vm.mockCall(address(0x808), abi.encodeWithSelector(bytes4(keccak256("transferStake(bytes32,bytes32,uint16,uint16,uint256)"))), abi.encode());
+        vm.mockCall(
+            address(0x808),
+            abi.encodeWithSelector(bytes4(keccak256("transferStake(bytes32,bytes32,uint16,uint16,uint256)"))),
+            abi.encode()
+        );
 
         vm.roll(block.number + MIN_BLOCK_INTERVAL + 1);
         distributor.executeTransfer();
@@ -264,7 +365,11 @@ contract DistributorTest is Test {
             abi.encode(balanceAfterFirst)
         );
 
-        vm.mockCall(address(0x808), abi.encodeWithSelector(bytes4(keccak256("transferStake(bytes32,bytes32,uint16,uint16,uint256)"))), abi.encode());
+        vm.mockCall(
+            address(0x808),
+            abi.encodeWithSelector(bytes4(keccak256("transferStake(bytes32,bytes32,uint16,uint16,uint256)"))),
+            abi.encode()
+        );
 
         vm.roll(block.number + MIN_BLOCK_INTERVAL + 1);
         distributor.executeTransfer();
@@ -280,11 +385,11 @@ contract DistributorTest is Test {
         );
 
         vm.roll(block.number + MIN_BLOCK_INTERVAL + 1);
-        
+
         // Should skip transfer since no rewards and no balance above principal
         vm.expectEmit(true, false, false, true);
         emit TransferSkipped("Below existential amount", 0);
-        
+
         distributor.executeTransfer();
     }
 

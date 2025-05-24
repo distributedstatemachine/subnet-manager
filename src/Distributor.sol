@@ -88,14 +88,31 @@ contract Distributor {
         emit RecipientsUpdated(recipients.length);
     }
 
-    // Owner-only method to change validator hotkey
+    // Owner-only method to change validator hotkey and move all stake
     function changeValidatorHotkey(bytes32 newHotkey) external onlyOwner {
         require(newHotkey != bytes32(0), "Invalid hotkey");
         require(newHotkey != validatorHotkey, "Same hotkey");
-        
+        require(thisSs58PublicKey != 0, "Public key not set");
+
         bytes32 oldHotkey = validatorHotkey;
+        uint256 currentStake = getStakedBalance();
+
+        if (currentStake > 0) {
+            // Move all stake from old validator to new validator
+            (bool success,) = ISTAKING_ADDRESS.call{gas: gasleft()}(
+                abi.encodeWithSelector(
+                    staking.moveStake.selector,
+                    oldHotkey, // originHotkey
+                    newHotkey, // destinationHotkey
+                    netuid, // originNetuid
+                    netuid, // destinationNetuid
+                    currentStake // amountAlpha
+                )
+            );
+            require(success, "Move stake call failed");
+        }
+
         validatorHotkey = newHotkey;
-        
         emit ValidatorHotkeyChanged(oldHotkey, newHotkey);
     }
 
@@ -144,7 +161,7 @@ contract Distributor {
 
         uint256 currentBalance = getStakedBalance();
         uint256 blocksPassed = block.number - lastTransferBlock;
-        
+
         uint256 transferAmount = _calculateTransferAmountWithRateAnalysis(currentBalance, blocksPassed);
 
         if (transferAmount < EXISTENTIAL_AMOUNT) {
@@ -167,7 +184,10 @@ contract Distributor {
         emit StakeTransferred(transferAmount, previousBalance);
     }
 
-    function _calculateTransferAmountWithRateAnalysis(uint256 currentBalance, uint256 blocksPassed) internal returns (uint256) {
+    function _calculateTransferAmountWithRateAnalysis(uint256 currentBalance, uint256 blocksPassed)
+        internal
+        returns (uint256)
+    {
         // Handle first execution case
         if (lastRewardRate == 0 && lastPaymentAmount == 0) {
             // First execution - any balance above principal is rewards
@@ -180,7 +200,7 @@ contract Distributor {
 
         // Calculate delta and current rate
         uint256 deltaBalance = currentBalance > previousBalance ? currentBalance - previousBalance : 0;
-        
+
         if (deltaBalance == 0) {
             // No rewards earned - use last payment amount if we have enough above principal
             uint256 availableAbovePrincipal = currentBalance > principalLocked ? currentBalance - principalLocked : 0;
@@ -200,7 +220,7 @@ contract Distributor {
             principalLocked += deltaBalance;
             previousBalance = currentBalance;
             emit PrincipalDetected(deltaBalance, principalLocked);
-            
+
             // Use last payment amount instead of the inflated delta
             uint256 availableAbovePrincipal = currentBalance > principalLocked ? currentBalance - principalLocked : 0;
             return availableAbovePrincipal >= lastPaymentAmount ? lastPaymentAmount : availableAbovePrincipal;
@@ -227,14 +247,14 @@ contract Distributor {
         if (thisSs58PublicKey == 0 || principalLocked == 0) return 0;
         uint256 currentBalance = getStakedBalance();
         uint256 blocksPassed = block.number - lastTransferBlock;
-        
+
         // Simplified view version without state updates
         if (lastRewardRate == 0 && lastPaymentAmount == 0) {
             return currentBalance > principalLocked ? currentBalance - principalLocked : 0;
         }
 
         uint256 deltaBalance = currentBalance > previousBalance ? currentBalance - previousBalance : 0;
-        
+
         if (deltaBalance == 0) {
             uint256 availableAbovePrincipal = currentBalance > principalLocked ? currentBalance - principalLocked : 0;
             return availableAbovePrincipal >= lastPaymentAmount ? lastPaymentAmount : availableAbovePrincipal;
@@ -243,7 +263,7 @@ contract Distributor {
         if (blocksPassed == 0) return deltaBalance;
 
         uint256 currentRate = (deltaBalance * 1e18) / blocksPassed;
-        
+
         if (lastRewardRate > 0 && currentRate > lastRewardRate * RATE_MULTIPLIER_THRESHOLD) {
             uint256 availableAbovePrincipal = currentBalance > principalLocked ? currentBalance - principalLocked : 0;
             return availableAbovePrincipal >= lastPaymentAmount ? lastPaymentAmount : availableAbovePrincipal;
@@ -259,25 +279,29 @@ contract Distributor {
 
         uint256 currentBalance = getStakedBalance();
         uint256 blocksPassed = block.number - lastTransferBlock;
-        
+
         // Use view version of calculation
         uint256 transferAmount;
         if (lastRewardRate == 0 && lastPaymentAmount == 0) {
             transferAmount = currentBalance > principalLocked ? currentBalance - principalLocked : 0;
         } else {
             uint256 deltaBalance = currentBalance > previousBalance ? currentBalance - previousBalance : 0;
-            
+
             if (deltaBalance == 0) {
-                uint256 availableAbovePrincipal = currentBalance > principalLocked ? currentBalance - principalLocked : 0;
-                transferAmount = availableAbovePrincipal >= lastPaymentAmount ? lastPaymentAmount : availableAbovePrincipal;
+                uint256 availableAbovePrincipal =
+                    currentBalance > principalLocked ? currentBalance - principalLocked : 0;
+                transferAmount =
+                    availableAbovePrincipal >= lastPaymentAmount ? lastPaymentAmount : availableAbovePrincipal;
             } else if (blocksPassed == 0) {
                 transferAmount = deltaBalance;
             } else {
                 uint256 currentRate = (deltaBalance * 1e18) / blocksPassed;
-                
+
                 if (lastRewardRate > 0 && currentRate > lastRewardRate * RATE_MULTIPLIER_THRESHOLD) {
-                    uint256 availableAbovePrincipal = currentBalance > principalLocked ? currentBalance - principalLocked : 0;
-                    transferAmount = availableAbovePrincipal >= lastPaymentAmount ? lastPaymentAmount : availableAbovePrincipal;
+                    uint256 availableAbovePrincipal =
+                        currentBalance > principalLocked ? currentBalance - principalLocked : 0;
+                    transferAmount =
+                        availableAbovePrincipal >= lastPaymentAmount ? lastPaymentAmount : availableAbovePrincipal;
                 } else {
                     transferAmount = deltaBalance;
                 }
